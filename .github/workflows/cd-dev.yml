@@ -24,6 +24,9 @@ jobs:
           mkdir -p ~/.ssh
           echo "$SSH_PRIVATE_KEY_DEV_B64" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+          # quick validation: derive pubkey; will fail if key is invalid/encrypted
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null
+          # pre-populate host key (avoid prompt)
           ssh-keyscan -H "$EC2_HOST_DEV" >> ~/.ssh/known_hosts || true
 
       - name: Upload site.zip
