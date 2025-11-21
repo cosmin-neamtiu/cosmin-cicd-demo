@@ -1,0 +1,11 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  build-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cd site
+          zip -r ../site.zip .
+      # Upload to S3 will be enabled after infra (Milestone 2)
