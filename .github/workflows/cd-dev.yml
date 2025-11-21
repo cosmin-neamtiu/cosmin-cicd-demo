@@ -7,6 +7,7 @@ on:
 jobs:
   deploy-dev:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -21,12 +22,16 @@ jobs:
           EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
         run: |
           set -e
+          if [ -z "${SSH_PRIVATE_KEY_DEV_B64}" ]; then
+            echo "ERROR: Secret SSH_PRIVATE_KEY_DEV_B64 is empty or not set."
+            exit 1
+          fi
           mkdir -p ~/.ssh
           echo "$SSH_PRIVATE_KEY_DEV_B64" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # quick validation: derive pubkey; will fail if key is invalid/encrypted
+          # validate key format (fails if encrypted/invalid)
           ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null
-          # pre-populate host key (avoid prompt )
+          # pre-accept host key
           ssh-keyscan -H "$EC2_HOST_DEV" >> ~/.ssh/known_hosts || true
 
       - name: Upload site.zip
@@ -45,4 +50,23 @@ jobs:
         run: |
           ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
               -i ~/.ssh/id_ed25519 "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
-              'sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html && (sudo systemctl reload nginx || sudo systemctl restart nginx)'
+              'set -e;
+               sudo mkdir -p /usr/share/nginx/html;
+               sudo rm -rf /usr/share/nginx/html/*;
+               sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html;
+               echo "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee /usr/share/nginx/html/version.txt >/dev/null;
+               sudo systemctl reload nginx || sudo systemctl restart nginx'
+
+      - name: Verify content on server
+        env:
+          EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
+          EC2_USER: ${{ vars.EC2_USER }}
+        run: |
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
+              -i ~/.ssh/id_ed25519 "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
+              'set -e;
+               echo "== index.html (first lines) ==";
+               head -n3 /usr/share/nginx/html/index.html || true;
+               echo "---";
+               echo "== version.txt ==";
+               cat /usr/share/nginx/html/version.txt || true'
