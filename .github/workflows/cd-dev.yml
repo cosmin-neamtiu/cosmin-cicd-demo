@@ -65,8 +65,5 @@ jobs:
           ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
               -i ~/.ssh/id_ed25519 "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
               'set -e;
-               echo "== index.html (first lines) ==";
-               head -n3 /usr/share/nginx/html/index.html || true;
-               echo "---";
-               echo "== version.txt ==";
-               cat /usr/share/nginx/html/version.txt || true'
+               grep -q "It works! 🚀" /usr/share/nginx/html/index.html;
+               echo "Server content looks good."'
