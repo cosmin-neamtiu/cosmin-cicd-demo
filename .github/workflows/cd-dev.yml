@@ -7,7 +7,6 @@ on:
 jobs:
   deploy-dev:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -16,17 +15,15 @@ jobs:
           cd site
           zip -r ../site.zip .
 
-      - name: Setup SSH key
+      - name: Setup SSH key (b64 safe)
         env:
-          SSH_PRIVATE_KEY_DEV: ${{ secrets.SSH_PRIVATE_KEY_DEV }}
+          SSH_PRIVATE_KEY_DEV_B64: ${{ secrets.SSH_PRIVATE_KEY_DEV_B64 }}
           EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
         run: |
           set -e
           mkdir -p ~/.ssh
-          # write key and strip CRLF if any
-          echo "$SSH_PRIVATE_KEY_DEV" | tr -d '\r' > ~/.ssh/id_ed25519
+          echo "$SSH_PRIVATE_KEY_DEV_B64" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # pre-populate known_hosts (or skip with StrictHostKeyChecking=no below)
           ssh-keyscan -H "$EC2_HOST_DEV" >> ~/.ssh/known_hosts || true
 
       - name: Upload site.zip
@@ -34,14 +31,15 @@ jobs:
           EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
           EC2_USER: ${{ vars.EC2_USER }}
         run: |
-          scp -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 \
-            site.zip "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}:/tmp/site.zip"
+          scp -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
+              -i ~/.ssh/id_ed25519 site.zip \
+              "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}:/tmp/site.zip"
 
       - name: Deploy & reload Nginx
         env:
           EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
           EC2_USER: ${{ vars.EC2_USER }}
         run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 \
-            "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
-            'sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html && (sudo systemctl reload nginx || sudo systemctl restart nginx)'
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
+              -i ~/.ssh/id_ed25519 "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
+              'sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html && (sudo systemctl reload nginx || sudo systemctl restart nginx)'
