@@ -1,0 +1,70 @@
+name: Release to Prod
+
+on:
+  push:
+    tags:
+      - "v*"  # Only run when a tag like v1.0.0 is pushed
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    # We assume the CI pipeline is running in parallel or finished fast. 
+    # For simplicity, we will rebuild the zip here or download if available. 
+    # To be safe and simple, let's just use the checkout code directly for now.
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create artifact (site.zip)
+        run: |
+          cd site
+          zip -r ../site.zip .
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
+
+      # Optional: Upload this specific release to S3 for long-term storage
+      - name: Upload Release Artifact
+        env:
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          aws s3 cp site.zip s3://$BUCKET/releases/$TAG_NAME.zip
+
+      - name: Setup SSH Key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PROD_B64 }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Deploy to Prod EC2
+        env:
+          HOST: ${{ secrets.EC2_HOST_PROD }} # Ensure this secret exists!
+          USER: "ec2-user"
+        run: |
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 site.zip $USER@$HOST:/tmp/site.zip
+          
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 $USER@$HOST << 'EOF'
+            set -e
+            sudo mkdir -p /usr/share/nginx/html
+            sudo rm -rf /usr/share/nginx/html/*
+            sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html
+            echo "Production Release: ${{ github.ref_name }}" | sudo tee /usr/share/nginx/html/version.txt
+            sudo systemctl reload nginx || sudo systemctl restart nginx
+          EOF
+
+      - name: Health Check
+        env:
+          HOST: ${{ secrets.EC2_HOST_PROD }}
+        run: |
+          echo "Checking http://$HOST ..."
+          sleep 5
+          curl --fail --max-time 5 "http://$HOST" || exit 1
+          echo "✅ Production Release Successful!"
