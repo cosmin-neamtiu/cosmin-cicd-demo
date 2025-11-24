@@ -5,13 +5,17 @@ on:
     workflows: ["CI (Build & Upload)"]
     types:
       - completed
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   deploy-dev:
-    # Only run if the CI workflow succeeded
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    
+    # We need to explicitly allow the action to create issues if vulnerabilities are found
+    permissions:
+      contents: read
+      issues: write 
 
     steps:
       - name: Configure AWS credentials
@@ -21,13 +25,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
 
-      - name: Download Artifact from S3
+      - name: Download Artifact
         env:
-          BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
-          # Use the commit hash that triggered this workflow
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
           COMMIT_HASH: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          echo "Downloading s3://$BUCKET/builds/$COMMIT_HASH.zip..."
           aws s3 cp s3://$BUCKET/builds/$COMMIT_HASH.zip site.zip
 
       - name: Setup SSH Key
@@ -40,13 +42,10 @@ jobs:
 
       - name: Deploy to EC2
         env:
-          HOST: ${{ secrets.EC2_HOST_DEV }}
+          HOST: ${{ secrets.EC2_HOST_DEV }} # Use Secrets!
           USER: "ec2-user"
         run: |
-          # 1. Upload the zip
           scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 site.zip $USER@$HOST:/tmp/site.zip
-          
-          # 2. Remote commands: Clean, Unzip, Reload Nginx
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 $USER@$HOST << 'EOF'
             set -e
             sudo mkdir -p /usr/share/nginx/html
@@ -56,12 +55,22 @@ jobs:
             sudo systemctl reload nginx || sudo systemctl restart nginx
           EOF
 
-      - name: Health Check
+      # ---------------------------------------------------------
+      # VALIDATE STAGE
+      # ---------------------------------------------------------
+
+      - name: 1. Functional Health Check
         env:
           HOST: ${{ secrets.EC2_HOST_DEV }}
         run: |
-          echo "Checking http://$HOST ..."
-          # Retry a few times in case Nginx is restarting
+          echo "Waiting for Nginx..."
           sleep 5
-          curl --fail --max-time 5 "http://$HOST" || exit 1
-          echo "✅ Deployment successful!"
+          curl --fail "http://$HOST/version.txt"
+          echo "✅ Server is responding."
+
+      - name: 2. DAST Scan (OWASP ZAP)
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: "http://${{ secrets.EC2_HOST_DEV }}"
+          fail_action: false # Don't break the build for minor warnings, just report
+          cmd_options: '-a'  # Includes alpha passive rules
