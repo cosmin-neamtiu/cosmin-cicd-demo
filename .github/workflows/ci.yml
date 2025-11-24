@@ -1,11 +1,40 @@
-name: CI
-on: [push, pull_request]
+name: CI (Build & Upload)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
 jobs:
-  build-zip:
+  build-and-upload:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-      - run: |
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create artifact (site.zip)
+        run: |
           cd site
           zip -r ../site.zip .
-      # Upload to S3 will be enabled after infra (Milestone 2)
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
+
+      - name: Upload to S3 (Versioning)
+        env:
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          COMMIT_HASH: ${{ github.sha }}
+        run: |
+          # Upload with the commit hash (immutable artifact)
+          aws s3 cp site.zip s3://$BUCKET/builds/$COMMIT_HASH.zip
+
+          # (Optional) Upload as 'latest' for easy manual checking
+          aws s3 cp site.zip s3://$BUCKET/builds/latest.zip
+          
+          echo "✅ Uploaded to s3://$BUCKET/builds/$COMMIT_HASH.zip"

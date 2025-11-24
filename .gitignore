@@ -1,0 +1,16 @@
+# Terraform (Ignore the massive plugin folders)
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+
+# OS junk
+.DS_Store
+
+# Archives
+*.zip
+
+# SSH Keys (Safety net in case you accidentally copied them here)
+*.pem
+*.pub
+id_rsa
+id_ed25519
