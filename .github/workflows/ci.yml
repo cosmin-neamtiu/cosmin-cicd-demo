@@ -3,12 +3,38 @@ name: CI (Build & Upload)
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]       # (Triggers on v1.0, v2.0.1, etc.)
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
+
 jobs:
+  # JOB 1: QUALITY CHECKS
+  test-html:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Validator
+        run: npm install -g html-validate
+
+      - name: Run Validation
+        run: |
+          # Create a strict config file on the fly
+          echo '{ "extends": ["html-validate:recommended"], "rules": { "no-trailing-whitespace": "off" } }' > .htmlvalidate.json
+          
+          # Validate all HTML files in the site folder
+          html-validate "site/**/*.html"
+
+  # JOB 2: BUILD (Only runs if 'test-html' passes)
   build-and-upload:
+    needs: test-html  # <--- This is the Gatekeeper!
     runs-on: ubuntu-latest
     
     steps:
@@ -27,15 +53,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
 
-      - name: Upload to S3 (Versioning)
+      - name: Upload to S3
         env:
-          BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
           COMMIT_HASH: ${{ github.sha }}
         run: |
-          # Upload with the commit hash (immutable artifact)
           aws s3 cp site.zip s3://$BUCKET/builds/$COMMIT_HASH.zip
-
-          # (Optional) Upload as 'latest' for easy manual checking
-          aws s3 cp site.zip s3://$BUCKET/builds/latest.zip
-          
           echo "✅ Uploaded to s3://$BUCKET/builds/$COMMIT_HASH.zip"
