@@ -9,32 +9,40 @@ on:
   workflow_dispatch:
 
 jobs:
-  # JOB 1: QUALITY CHECKS
-  test-html:
+  # JOB 1: QUALITY CHECKS (Lint + SAST)
+  quality-checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 1. LINT: Check HTML syntax
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install Validator
-        run: npm install -g html-validate
-
-      - name: Run Validation
+      - name: Install & Run HTML Validator
         run: |
-          # Create a strict config file on the fly
+          npm install -g html-validate
           echo '{ "extends": ["html-validate:recommended"], "rules": { "no-trailing-whitespace": "off" } }' > .htmlvalidate.json
-          
-          # Validate all HTML files in the site folder
           html-validate "site/**/*.html"
 
-  # JOB 2: BUILD (Only runs if 'test-html' passes)
+      # 2. SAST: Check for secrets & config issues
+      - name: Run Trivy Vulnerability Scanner (SAST)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'             # Scan the file system
+          scan-ref: '.'               # Scan the current directory
+          hide-progress: false
+          format: 'table'             # Output pretty table
+          exit-code: '1'              # Fail the job if issues are found
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'   # Only stop for big issues
+
+  # JOB 2: BUILD
   build-and-upload:
-    needs: test-html  # <--- This is the Gatekeeper!
+    needs: quality-checks  # Runs only if Lint AND SAST pass
     runs-on: ubuntu-latest
     
     steps:
