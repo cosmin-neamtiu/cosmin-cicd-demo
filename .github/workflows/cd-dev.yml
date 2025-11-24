@@ -40,7 +40,7 @@ jobs:
 
       - name: Deploy to EC2
         env:
-          HOST: ${{ vars.EC2_HOST_DEV }}
+          HOST: ${{ secrets.EC2_HOST_DEV }}
           USER: "ec2-user"
         run: |
           # 1. Upload the zip
@@ -58,7 +58,7 @@ jobs:
 
       - name: Health Check
         env:
-          HOST: ${{ vars.EC2_HOST_DEV }}
+          HOST: ${{ secrets.EC2_HOST_DEV }}
         run: |
           echo "Checking http://$HOST ..."
           # Retry a few times in case Nginx is restarting
