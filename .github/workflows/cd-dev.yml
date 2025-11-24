@@ -69,8 +69,9 @@ jobs:
           echo "✅ Server is responding."
 
       - name: 2. DAST Scan (OWASP ZAP)
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@v0.14.0
         with:
           target: "http://${{ secrets.EC2_HOST_DEV }}"
           fail_action: false # Don't break the build for minor warnings, just report
           cmd_options: '-a'  # Includes alpha passive rules
+          artifact_name: 'zap-scan-report'
