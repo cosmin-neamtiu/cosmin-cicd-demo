@@ -1,69 +1,67 @@
-name: CD Dev (SSH)
+name: CD Dev (Deploy)
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["CI (Build & Upload)"]
+    types:
+      - completed
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   deploy-dev:
+    # Only run if the CI workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
 
-      - name: Build artifact
-        run: |
-          cd site
-          zip -r ../site.zip .
-
-      - name: Setup SSH key (b64 safe)
+      - name: Download Artifact from S3
         env:
-          SSH_PRIVATE_KEY_DEV_B64: ${{ secrets.SSH_PRIVATE_KEY_DEV_B64 }}
-          EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          # Use the commit hash that triggered this workflow
+          COMMIT_HASH: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          set -e
-          if [ -z "${SSH_PRIVATE_KEY_DEV_B64}" ]; then
-            echo "ERROR: Secret SSH_PRIVATE_KEY_DEV_B64 is empty or not set."
-            exit 1
-          fi
+          echo "Downloading s3://$BUCKET/builds/$COMMIT_HASH.zip..."
+          aws s3 cp s3://$BUCKET/builds/$COMMIT_HASH.zip site.zip
+
+      - name: Setup SSH Key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_DEV_B64 }}
+        run: |
           mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY_DEV_B64" | base64 -d > ~/.ssh/id_ed25519
+          echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # validate key format (fails if encrypted/invalid)
-          ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null
-          # pre-accept host key
-          ssh-keyscan -H "$EC2_HOST_DEV" >> ~/.ssh/known_hosts || true
 
-      - name: Upload site.zip
+      - name: Deploy to EC2
         env:
-          EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
-          EC2_USER: ${{ vars.EC2_USER }}
+          HOST: ${{ vars.EC2_HOST_DEV }}
+          USER: "ec2-user"
         run: |
-          scp -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
-              -i ~/.ssh/id_ed25519 site.zip \
-              "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}:/tmp/site.zip"
+          # 1. Upload the zip
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 site.zip $USER@$HOST:/tmp/site.zip
+          
+          # 2. Remote commands: Clean, Unzip, Reload Nginx
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 $USER@$HOST << 'EOF'
+            set -e
+            sudo mkdir -p /usr/share/nginx/html
+            sudo rm -rf /usr/share/nginx/html/*
+            sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html
+            echo "Deployed via CD" | sudo tee /usr/share/nginx/html/version.txt
+            sudo systemctl reload nginx || sudo systemctl restart nginx
+          EOF
 
-      - name: Deploy & reload Nginx
+      - name: Health Check
         env:
-          EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
-          EC2_USER: ${{ vars.EC2_USER }}
+          HOST: ${{ vars.EC2_HOST_DEV }}
         run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
-              -i ~/.ssh/id_ed25519 "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
-              'set -e;
-               sudo mkdir -p /usr/share/nginx/html;
-               sudo rm -rf /usr/share/nginx/html/*;
-               sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html;
-               echo "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee /usr/share/nginx/html/version.txt >/dev/null;
-               sudo systemctl reload nginx || sudo systemctl restart nginx'
-
-      - name: Verify content on server
-        env:
-          EC2_HOST_DEV: ${{ secrets.EC2_HOST_DEV }}
-          EC2_USER: ${{ vars.EC2_USER }}
-        run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \
-              -i ~/.ssh/id_ed25519 "${EC2_USER:-ec2-user}@${EC2_HOST_DEV}" \
-              'set -e;
-               grep -q "It works! 🚀" /usr/share/nginx/html/index.html;
-               echo "Server content looks good."'
+          echo "Checking http://$HOST ..."
+          # Retry a few times in case Nginx is restarting
+          sleep 5
+          curl --fail --max-time 5 "http://$HOST" || exit 1
+          echo "✅ Deployment successful!"
