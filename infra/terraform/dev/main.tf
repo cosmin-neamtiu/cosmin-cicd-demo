@@ -77,29 +77,31 @@ locals {
     
     # 1. Wait for yum lock
     while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
-       echo "Waiting for other yum processes..."
+       echo "Waiting for yum..."
        sleep 5
     done
     
-    # 2. Install Nginx
+    # 2. Install
     yum update -y
     amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
-    # 3. Security Config (Same as Prod for consistency)
+    # 3. Security (The Safer Way: No sed hacking)
+    # We just create a separate file. Nginx automatically includes conf.d/*.conf
     cat <<EOT > /etc/nginx/conf.d/security_headers.conf
     server_tokens off;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     EOT
-    sed -i '/include \/etc\/nginx\/conf.d\/\*.conf;/i \    include /etc/nginx/conf.d/security_headers.conf;' /etc/nginx/nginx.conf
 
     # 4. Start
     systemctl enable nginx --now
     
-    # 5. Prep Web Root
+    # 5. Web Root Permissions
     mkdir -p /usr/share/nginx/html
     chown -R ec2-user:ec2-user /usr/share/nginx/html
+    
+    # 6. Default Page
     echo "<h1>Dev Environment Ready</h1>" > /usr/share/nginx/html/index.html
     echo "dev_init" > /usr/share/nginx/html/version.txt
   EOF
