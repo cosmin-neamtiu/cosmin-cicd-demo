@@ -2,15 +2,20 @@ terraform {
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
+
+  # REMOTE BACKEND: DEV
+  backend "s3" {
+    bucket         = "cosmin-cicd-artifacts-303952966154"
+    key            = "terraform/dev/state.tfstate"
+    region         = "eu-central-1"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
   region = "eu-central-1"
 }
 
-# -----------------------------------------------------------------------------
-# Networking & Security
-# -----------------------------------------------------------------------------
 data "aws_vpc" "default" { default = true }
 data "aws_subnets" "default" {
   filter {
@@ -18,7 +23,16 @@ data "aws_subnets" "default" {
     values = [data.aws_vpc.default.id]
   }
 }
+data "aws_ami" "amzn2" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+}
 
+# Dev Security Group (SSH + HTTP)
 resource "aws_security_group" "dev_web" {
   name        = "cosmin-dev-web-sg"
   description = "Allow HTTP and SSH for DEV"
@@ -28,7 +42,7 @@ resource "aws_security_group" "dev_web" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # In prod, restrict this to your IP or VPN
+    cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
     from_port   = 80
@@ -44,22 +58,45 @@ resource "aws_security_group" "dev_web" {
   }
 }
 
-# -----------------------------------------------------------------------------
-# Compute
-# -----------------------------------------------------------------------------
-data "aws_ami" "amzn2" {
-  most_recent = true
-  owners      = ["amazon"]
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-}
-
 resource "aws_key_pair" "dev_key" {
   key_name   = "cosmin-dev-key"
-  # Ensure this file exists locally before running apply
-  public_key = file(pathexpand("~/.ssh/cosmin-ec2.pub")) 
+  public_key = file(pathexpand("~/.ssh/cosmin-ec2.pub"))
+}
+
+# Robust User Data for Dev
+locals {
+  user_data = <<-EOF
+    #!/bin/bash
+    exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+    
+    # 1. Wait for yum lock
+    while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
+       echo "Waiting for other yum processes..."
+       sleep 5
+    done
+    
+    # 2. Install Nginx
+    yum update -y
+    amazon-linux-extras install nginx1 -y
+    yum install -y unzip
+    
+    # 3. Security Config (Same as Prod for consistency)
+    cat <<EOT > /etc/nginx/conf.d/security_headers.conf
+    server_tokens off;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    EOT
+    sed -i '/include \/etc\/nginx\/conf.d\/\*.conf;/i \    include /etc/nginx/conf.d/security_headers.conf;' /etc/nginx/nginx.conf
+
+    # 4. Start
+    systemctl enable nginx --now
+    
+    # 5. Prep Web Root
+    mkdir -p /usr/share/nginx/html
+    chown -R ec2-user:ec2-user /usr/share/nginx/html
+    echo "<h1>Dev Environment Ready</h1>" > /usr/share/nginx/html/index.html
+    echo "dev_init" > /usr/share/nginx/html/version.txt
+  EOF
 }
 
 resource "aws_instance" "dev" {
@@ -68,17 +105,7 @@ resource "aws_instance" "dev" {
   subnet_id              = element(data.aws_subnets.default.ids, 0)
   vpc_security_group_ids = [aws_security_group.dev_web.id]
   key_name               = aws_key_pair.dev_key.key_name
-
-  # User data to install Nginx and AWS CLI (needed for S3 pull later)
-  user_data = <<-USERDATA
-    #!/bin/bash
-    set -e
-    yum update -y
-    amazon-linux-extras install nginx1 -y || yum install -y nginx
-    yum install -y unzip awscli
-    systemctl enable nginx --now
-    echo "<h1>Dev Environment - Waiting for Deploy</h1>" > /usr/share/nginx/html/index.html
-  USERDATA
+  user_data              = local.user_data
 
   tags = {
     Name = "cosmin-dev-instance"
@@ -86,4 +113,6 @@ resource "aws_instance" "dev" {
   }
 }
 
-output "dev_public_ip" { value = aws_instance.dev.public_ip }
+output "dev_public_ip" {
+  value = aws_instance.dev.public_ip
+}

@@ -2,16 +2,21 @@ terraform {
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
+
+  # REMOTE BACKEND: PROD
+  backend "s3" {
+    bucket         = "cosmin-cicd-artifacts-303952966154"
+    key            = "terraform/prod/state.tfstate"
+    region         = "eu-central-1"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
   region = "eu-central-1"
 }
 
-# -----------------------------------------------------------------------------
 # Data Sources
-# -----------------------------------------------------------------------------
-data "aws_caller_identity" "current" {}
 data "aws_vpc" "default" { default = true }
 data "aws_subnets" "default" {
   filter {
@@ -28,15 +33,11 @@ data "aws_ami" "amzn2" {
   }
 }
 
-# -----------------------------------------------------------------------------
 # Security Groups
-# -----------------------------------------------------------------------------
-# 1. ALB Security Group: Open to the world (HTTP 80)
 resource "aws_security_group" "lb_sg" {
   name        = "cosmin-prod-lb-sg"
   description = "Allow HTTP to Load Balancer"
   vpc_id      = data.aws_vpc.default.id
-
   ingress {
     from_port   = 80
     to_port     = 80
@@ -51,28 +52,22 @@ resource "aws_security_group" "lb_sg" {
   }
 }
 
-# 2. EC2 Security Group: Allows traffic ONLY from ALB + SSH from everywhere
 resource "aws_security_group" "ec2_sg" {
   name        = "cosmin-prod-ec2-sg"
   description = "Allow traffic from ALB and SSH"
   vpc_id      = data.aws_vpc.default.id
-
-  # HTTP: Allow ONLY from the Load Balancer
   ingress {
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
     security_groups = [aws_security_group.lb_sg.id] 
   }
-
-  # SSH: Allow for deployment
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -81,9 +76,7 @@ resource "aws_security_group" "ec2_sg" {
   }
 }
 
-# -----------------------------------------------------------------------------
-# Load Balancer & Target Groups
-# -----------------------------------------------------------------------------
+# Load Balancer
 resource "aws_lb" "app" {
   name               = "cosmin-prod-alb"
   internal           = false
@@ -98,11 +91,8 @@ resource "aws_lb_target_group" "blue" {
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
   health_check {
-    path                = "/version.txt"
-    matcher             = "200"
-    interval            = 10
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
+    path = "/version.txt"
+    matcher = "200"
   }
 }
 
@@ -112,78 +102,54 @@ resource "aws_lb_target_group" "green" {
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
   health_check {
-    path                = "/version.txt"
-    matcher             = "200"
-    interval            = 10
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
+    path = "/version.txt"
+    matcher = "200"
   }
 }
 
-# Listener: Defaults to BLUE initially
 resource "aws_lb_listener" "front_end" {
   load_balancer_arn = aws_lb.app.arn
   port              = "80"
   protocol          = "HTTP"
-
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.blue.arn
   }
 }
 
-# -----------------------------------------------------------------------------
-# EC2 Instances (Blue & Green)
-# -----------------------------------------------------------------------------
+# Instances
 resource "aws_key_pair" "prod_key" {
   key_name   = "cosmin-prod-key"
   public_key = file(pathexpand("~/.ssh/cosmin-ec2.pub"))
 }
 
-# Shared User Data script (ROBUST VERSION)
+# Robust User Data (Prod)
 locals {
   user_data = <<-EOF
     #!/bin/bash
-    # Redirect logs to /var/log/user-data.log for debugging
     exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
     
-    echo "Starting User Data..."
-
-    # 1. Wait for yum lock to clear (Loop until yum is ready)
-    # Amazon Linux runs updates on boot, which locks yum. We must wait.
     while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
-       echo "Waiting for other yum processes..."
+       echo "Waiting for yum..."
        sleep 5
     done
     
-    # 2. Update & Install Nginx
     yum update -y
     amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
-    # 3. Security Hardening (Fix ZAP Warnings)
-    # Hide Nginx Version and add Security Headers
     cat <<EOT > /etc/nginx/conf.d/security_headers.conf
     server_tokens off;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     EOT
-    # Include the new config
     sed -i '/include \/etc\/nginx\/conf.d\/\*.conf;/i \    include /etc/nginx/conf.d/security_headers.conf;' /etc/nginx/nginx.conf
 
-    # 4. Start Services
     systemctl enable nginx --now
-    
-    # 5. Prep Web Root
-    # IMPORTANT: Change ownership so the 'ec2-user' (SSH user) can write here without sudo
     mkdir -p /usr/share/nginx/html
     chown -R ec2-user:ec2-user /usr/share/nginx/html
-    
-    # 6. Default Content
     echo "<h1>Waiting for Deployment...</h1>" > /usr/share/nginx/html/index.html
-    echo "initial_version" > /usr/share/nginx/html/version.txt
-
-    echo "User Data Complete!"
+    echo "prod_init" > /usr/share/nginx/html/version.txt
   EOF
 }
 
@@ -202,14 +168,11 @@ resource "aws_instance" "green" {
   instance_type          = "t3.micro"
   key_name               = aws_key_pair.prod_key.key_name
   vpc_security_group_ids = [aws_security_group.ec2_sg.id]
-  subnet_id              = element(data.aws_subnets.default.ids, 1) # Put in different AZ if possible
+  subnet_id              = element(data.aws_subnets.default.ids, 1)
   user_data              = local.user_data
   tags = { Name = "Prod-Green", Color = "green" }
 }
 
-# -----------------------------------------------------------------------------
-# Attachments
-# -----------------------------------------------------------------------------
 resource "aws_lb_target_group_attachment" "blue" {
   target_group_arn = aws_lb_target_group.blue.arn
   target_id        = aws_instance.blue.id
@@ -221,3 +184,4 @@ resource "aws_lb_target_group_attachment" "green" {
   target_id        = aws_instance.green.id
   port             = 80
 }
+
