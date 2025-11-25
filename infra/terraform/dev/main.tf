@@ -16,6 +16,12 @@ provider "aws" {
   region = "eu-central-1"
 }
 
+variable "public_key" {
+  description = "Public SSH key for EC2"
+  type        = string
+  sensitive   = true
+}
+
 data "aws_vpc" "default" { default = true }
 data "aws_subnets" "default" {
   filter {
@@ -60,7 +66,7 @@ resource "aws_security_group" "dev_web" {
 
 resource "aws_key_pair" "dev_key" {
   key_name   = "cosmin-dev-key"
-  public_key = file(pathexpand("~/.ssh/cosmin-ec2.pub"))
+  public_key = var.public_key
 }
 
 # Robust User Data for Dev
