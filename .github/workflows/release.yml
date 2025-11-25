@@ -92,22 +92,25 @@ jobs:
             
             sudo systemctl reload nginx || sudo systemctl restart nginx
           "
-
-      # ------------------------------------------------------------------
-      # TEST: Verify Idle is working
+# ------------------------------------------------------------------
+      # TEST: Verify Idle is working (via SSH Localhost)
       # ------------------------------------------------------------------
       - name: 🧪 Health Check (Idle)
         run: |
-          echo "Checking connectivity to $DEPLOY_IP..."
+          echo "Checking health internally on $DEPLOY_IP..."
           sleep 5
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$DEPLOY_IP/version.txt)
           
-          if [ "$HTTP_CODE" == "200" ]; then
-            echo "✅ Health check passed! Server returned 200."
-          else
-            echo "❌ Health check failed. Server returned $HTTP_CODE"
-            exit 1
-          fi
+          # Use SSH to run curl LOCALHOST inside the box.
+          # This bypasses the Security Group that blocks external HTTP.
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 ec2-user@$DEPLOY_IP "
+            if curl --fail -s http://localhost/version.txt; then
+              echo '✅ Local Health Check Passed'
+              exit 0
+            else
+              echo '❌ Local Health Check Failed'
+              exit 1
+            fi
+          "
 
       # ------------------------------------------------------------------
       # SWAP: Flip the Load Balancer

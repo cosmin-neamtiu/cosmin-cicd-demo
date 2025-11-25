@@ -65,7 +65,7 @@ resource "aws_security_group" "ec2_sg" {
     security_groups = [aws_security_group.lb_sg.id] 
   }
 
-  # SSH: Allow for deployment (In real prod, i should restrict this to GitHub IPs or VPN)
+  # SSH: Allow for deployment
   ingress {
     from_port   = 22
     to_port     = 22
@@ -140,34 +140,50 @@ resource "aws_key_pair" "prod_key" {
   public_key = file(pathexpand("~/.ssh/cosmin-ec2.pub"))
 }
 
-# Shared User Data script
+# Shared User Data script (ROBUST VERSION)
 locals {
   user_data = <<-EOF
     #!/bin/bash
+    # Redirect logs to /var/log/user-data.log for debugging
+    exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
     
+    echo "Starting User Data..."
+
     # 1. Wait for yum lock to clear (Loop until yum is ready)
+    # Amazon Linux runs updates on boot, which locks yum. We must wait.
     while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
        echo "Waiting for other yum processes..."
        sleep 5
     done
     
-    # 2. Update System
+    # 2. Update & Install Nginx
     yum update -y
-    
-    # 3. Install Nginx (The AL2 way) & Unzip
     amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
+    # 3. Security Hardening (Fix ZAP Warnings)
+    # Hide Nginx Version and add Security Headers
+    cat <<EOT > /etc/nginx/conf.d/security_headers.conf
+    server_tokens off;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    EOT
+    # Include the new config
+    sed -i '/include \/etc\/nginx\/conf.d\/\*.conf;/i \    include /etc/nginx/conf.d/security_headers.conf;' /etc/nginx/nginx.conf
+
     # 4. Start Services
     systemctl enable nginx --now
     
-    # 5. Prep Web Root (Ensure folder exists)
+    # 5. Prep Web Root
+    # IMPORTANT: Change ownership so the 'ec2-user' (SSH user) can write here without sudo
     mkdir -p /usr/share/nginx/html
     chown -R ec2-user:ec2-user /usr/share/nginx/html
     
     # 6. Default Content
     echo "<h1>Waiting for Deployment...</h1>" > /usr/share/nginx/html/index.html
     echo "initial_version" > /usr/share/nginx/html/version.txt
+
+    echo "User Data Complete!"
   EOF
 }
 
