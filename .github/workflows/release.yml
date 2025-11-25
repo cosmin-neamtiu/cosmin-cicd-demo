@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # Required for AWS credentials
+      id-token: write
 
     steps:
       - name: Checkout Code
@@ -37,12 +37,10 @@ jobs:
       # ------------------------------------------------------------------
       # LOGIC: Detect Blue vs Green
       # ------------------------------------------------------------------
-      - name:  Detect Active Environment
+      - name: 🕵️ Detect Active Environment
         id: detect
         run: |
-          echo "Checking Listener: ${{ secrets.PROD_LISTENER_ARN }}"
-          
-          # Get the Target Group ARN currently in use
+          # Ask AWS: Which Target Group is the Listener pointing to?
           CURRENT_TG=$(aws elbv2 describe-listeners \
             --listener-arns ${{ secrets.PROD_LISTENER_ARN }} \
             --query "Listeners[0].DefaultActions[0].TargetGroupArn" \
@@ -50,35 +48,46 @@ jobs:
           
           echo "Current Live Target Group: $CURRENT_TG"
           
-          # Logic to determine IDLE environment
+          # Compare with Blue ARN to decide destination
           if [ "$CURRENT_TG" == "${{ secrets.PROD_TG_BLUE_ARN }}" ]; then
-            echo "🔵 Blue is LIVE. Target is 🟢 GREEN."
+            echo "🔵 Blue is LIVE. Deploying to 🟢 GREEN."
             echo "DEPLOY_IP=${{ secrets.PROD_IP_GREEN }}" >> $GITHUB_ENV
             echo "NEW_TG_ARN=${{ secrets.PROD_TG_GREEN_ARN }}" >> $GITHUB_ENV
             echo "COLOR=Green" >> $GITHUB_ENV
           else
-            echo "🟢 Green is LIVE. Target is 🔵 BLUE."
+            echo "🟢 Green is LIVE. Deploying to 🔵 BLUE."
             echo "DEPLOY_IP=${{ secrets.PROD_IP_BLUE }}" >> $GITHUB_ENV
             echo "NEW_TG_ARN=${{ secrets.PROD_TG_BLUE_ARN }}" >> $GITHUB_ENV
             echo "COLOR=Blue" >> $GITHUB_ENV
           fi
 
       # ------------------------------------------------------------------
-      # DEPLOY: To the Idle IP
+      # DEPLOY: To the Idle IP (With Self-Healing)
       # ------------------------------------------------------------------
-      - name:  Deploy to Idle ($COLOR)
+      - name: 🚚 Deploy to Idle ($COLOR)
         run: |
           echo "Deploying to $DEPLOY_IP ($COLOR)..."
           
+          # 1. Upload the zip
           scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 site.zip ec2-user@$DEPLOY_IP:/tmp/site.zip
           
+          # 2. Remote Commands (Install Nginx if missing, then deploy)
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 ec2-user@$DEPLOY_IP "
             set -e
+            
+            # --- SELF HEALING START ---
+            if ! command -v nginx &> /dev/null; then
+                echo '⚠️ Nginx not found! Installing it now...'
+                sudo amazon-linux-extras install nginx1 -y
+                sudo systemctl enable nginx --now
+            fi
+            # --- SELF HEALING END ---
+
             sudo mkdir -p /usr/share/nginx/html
             sudo rm -rf /usr/share/nginx/html/*
             sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html
             
-            # Write Version file for Healthcheck
+            # Write Version file
             echo '${{ github.ref_name }}' | sudo tee /usr/share/nginx/html/version.txt
             
             sudo systemctl reload nginx || sudo systemctl restart nginx
@@ -87,11 +96,10 @@ jobs:
       # ------------------------------------------------------------------
       # TEST: Verify Idle is working
       # ------------------------------------------------------------------
-      - name:  Health Check (Idle)
+      - name: 🧪 Health Check (Idle)
         run: |
           echo "Checking connectivity to $DEPLOY_IP..."
           sleep 5
-          # Direct curl to the EC2 IP to ensure it's serving the new version
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$DEPLOY_IP/version.txt)
           
           if [ "$HTTP_CODE" == "200" ]; then
@@ -104,7 +112,7 @@ jobs:
       # ------------------------------------------------------------------
       # SWAP: Flip the Load Balancer
       # ------------------------------------------------------------------
-      - name:  SWAP TRAFFIC (Blue <-> Green)
+      - name: 🔀 SWAP TRAFFIC (Blue <-> Green)
         run: |
           echo "Switching Load Balancer traffic to $NEW_TG_ARN ($COLOR)..."
           
@@ -112,4 +120,4 @@ jobs:
             --listener-arn ${{ secrets.PROD_LISTENER_ARN }} \
             --default-actions Type=forward,TargetGroupArn=$NEW_TG_ARN
           
-          echo " Traffic Swapped! $COLOR is now LIVE."
+          echo "🚀 Traffic Swapped! $COLOR is now LIVE."

@@ -144,19 +144,30 @@ resource "aws_key_pair" "prod_key" {
 locals {
   user_data = <<-EOF
     #!/bin/bash
-    set -e
+    
+    # 1. Wait for yum lock to clear (Loop until yum is ready)
+    while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
+       echo "Waiting for other yum processes..."
+       sleep 5
+    done
+    
+    # 2. Update System
     yum update -y
     
-    # INSTALL NGINX (Robust method for Amazon Linux 2)
-    amazon-linux-extras install nginx1 -y || yum install -y nginx
+    # 3. Install Nginx (The AL2 way) & Unzip
+    amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
+    # 4. Start Services
     systemctl enable nginx --now
     
-    # Default placeholder content
+    # 5. Prep Web Root (Ensure folder exists)
+    mkdir -p /usr/share/nginx/html
+    chown -R ec2-user:ec2-user /usr/share/nginx/html
+    
+    # 6. Default Content
     echo "<h1>Waiting for Deployment...</h1>" > /usr/share/nginx/html/index.html
     echo "initial_version" > /usr/share/nginx/html/version.txt
-    chown -R ec2-user:ec2-user /usr/share/nginx/html
   EOF
 }
 
