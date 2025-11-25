@@ -144,9 +144,15 @@ resource "aws_key_pair" "prod_key" {
 locals {
   user_data = <<-EOF
     #!/bin/bash
+    set -e
     yum update -y
-    yum install -y nginx unzip
+    
+    # INSTALL NGINX (Robust method for Amazon Linux 2)
+    amazon-linux-extras install nginx1 -y || yum install -y nginx
+    yum install -y unzip
+    
     systemctl enable nginx --now
+    
     # Default placeholder content
     echo "<h1>Waiting for Deployment...</h1>" > /usr/share/nginx/html/index.html
     echo "initial_version" > /usr/share/nginx/html/version.txt
