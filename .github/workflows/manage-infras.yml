@@ -1,0 +1,121 @@
+name: Manage Infrastructure (Universal)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+          - global
+      terraform_action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        default: 'apply'
+        options:
+          - plan
+          - apply
+          - destroy
+
+jobs:
+  terraform-manager:
+    name: ${{ inputs.terraform_action }} -> ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    
+    env:
+      # AWS Creds
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: eu-central-1
+      # Github Token for Secret Updates
+      GH_TOKEN: ${{ secrets.PA_TOKEN }}
+
+    defaults:
+      run:
+        working-directory: infra/terraform/${{ inputs.environment }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      # ------------------------------------------------------
+      # ACTION: PLAN
+      # ------------------------------------------------------
+      - name: Terraform Plan
+        if: ${{ inputs.terraform_action == 'plan' }}
+        run: terraform plan
+
+      # ------------------------------------------------------
+      # ACTION: APPLY
+      # ------------------------------------------------------
+      - name: Terraform Apply
+        if: ${{ inputs.terraform_action == 'apply' }}
+        run: terraform apply -auto-approve
+
+      # ------------------------------------------------------
+      # ACTION: DESTROY (Requires manual approval in real life, auto here)
+      # ------------------------------------------------------
+      - name: Terraform Destroy
+        if: ${{ inputs.terraform_action == 'destroy' }}
+        run: terraform destroy -auto-approve
+
+      # ------------------------------------------------------
+      # SECRET SYNC: DEV (Only runs if applying Dev)
+      # ------------------------------------------------------
+      - name: Sync DEV Secrets
+        if: ${{ inputs.environment == 'dev' && inputs.terraform_action == 'apply' }}
+        run: |
+          echo "Syncing Dev outputs..."
+          RAW=$(terraform output -json)
+          DEV_IP=$(echo $RAW | jq -r .dev_public_ip.value)
+          
+          echo "Updating EC2_HOST_DEV to $DEV_IP"
+          gh secret set EC2_HOST_DEV --body "$DEV_IP"
+
+      # ------------------------------------------------------
+      # SECRET SYNC: PROD (Only runs if applying Prod)
+      # ------------------------------------------------------
+      - name: Sync PROD Secrets
+        if: ${{ inputs.environment == 'prod' && inputs.terraform_action == 'apply' }}
+        run: |
+          echo "Syncing Prod outputs..."
+          RAW=$(terraform output -json)
+          
+          BLUE_IP=$(echo $RAW | jq -r .prod_ip_blue.value)
+          GREEN_IP=$(echo $RAW | jq -r .prod_ip_green.value)
+          LISTENER=$(echo $RAW | jq -r .prod_listener_arn.value)
+          BLUE_TG=$(echo $RAW | jq -r .prod_tg_blue_arn.value)
+          GREEN_TG=$(echo $RAW | jq -r .prod_tg_green_arn.value)
+
+          echo "Updating Prod Secrets..."
+          gh secret set PROD_IP_BLUE --body "$BLUE_IP"
+          gh secret set PROD_IP_GREEN --body "$GREEN_IP"
+          gh secret set PROD_LISTENER_ARN --body "$LISTENER"
+          gh secret set PROD_TG_BLUE_ARN --body "$BLUE_TG"
+          gh secret set PROD_TG_GREEN_ARN --body "$GREEN_TG"
+
+      # ------------------------------------------------------
+      # SECRET SYNC: GLOBAL (Updates Bucket Name)
+      # ------------------------------------------------------
+      - name: Sync GLOBAL Secrets
+        if: ${{ inputs.environment == 'global' && inputs.terraform_action == 'apply' }}
+        run: |
+          echo "Syncing Global outputs..."
+          RAW=$(terraform output -json)
+          BUCKET=$(echo $RAW | jq -r .artifacts_bucket_name.value)
+          
+          echo "Updating ARTIFACTS_BUCKET..."
+          gh secret set ARTIFACTS_BUCKET --body "$BUCKET"
