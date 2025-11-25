@@ -81,13 +81,14 @@ locals {
        sleep 5
     done
     
-    # 2. Install
+    # 2. Install Nginx
     yum update -y
     amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
-    # 3. Security (The Safer Way: No sed hacking)
-    # We just create a separate file. Nginx automatically includes conf.d/*.conf
+    # 3. Security Config (The Safer Way)
+    # We just create the file. Nginx loads conf.d/*.conf by default!
+    # We do NOT edit nginx.conf anymore.
     cat <<EOT > /etc/nginx/conf.d/security_headers.conf
     server_tokens off;
     add_header X-Frame-Options "SAMEORIGIN" always;
