@@ -16,6 +16,12 @@ provider "aws" {
   region = "eu-central-1"
 }
 
+variable "public_key" {
+  description = "Public SSH key for EC2"
+  type        = string
+  sensitive   = true
+}
+
 # Data Sources
 data "aws_vpc" "default" { default = true }
 data "aws_subnets" "default" {
@@ -120,7 +126,7 @@ resource "aws_lb_listener" "front_end" {
 # Instances
 resource "aws_key_pair" "prod_key" {
   key_name   = "cosmin-prod-key"
-  public_key = file(pathexpand("~/.ssh/cosmin-ec2.pub"))
+  public_key = var.public_key
 }
 
 # Robust User Data (Prod)

@@ -33,6 +33,7 @@ jobs:
       AWS_REGION: eu-central-1
       # Github Token for Secret Updates
       GH_TOKEN: ${{ secrets.PA_TOKEN }}
+      TF_VAR_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
 
     defaults:
       run:
