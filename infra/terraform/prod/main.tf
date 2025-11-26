@@ -16,13 +16,14 @@ provider "aws" {
   region = "eu-central-1"
 }
 
+# --- VARIABLES ---
 variable "public_key" {
   description = "Public SSH key for EC2"
   type        = string
   sensitive   = true
 }
 
-# Data Sources
+# --- DATA SOURCES ---
 data "aws_vpc" "default" { default = true }
 data "aws_subnets" "default" {
   filter {
@@ -39,11 +40,13 @@ data "aws_ami" "amzn2" {
   }
 }
 
-# Security Groups
+# --- SECURITY GROUPS ---
+# 1. ALB SG: Open to World
 resource "aws_security_group" "lb_sg" {
   name        = "cosmin-prod-lb-sg"
   description = "Allow HTTP to Load Balancer"
   vpc_id      = data.aws_vpc.default.id
+
   ingress {
     from_port   = 80
     to_port     = 80
@@ -58,16 +61,20 @@ resource "aws_security_group" "lb_sg" {
   }
 }
 
+# 2. EC2 SG: Allow ALB + SSH
 resource "aws_security_group" "ec2_sg" {
   name        = "cosmin-prod-ec2-sg"
   description = "Allow traffic from ALB and SSH"
   vpc_id      = data.aws_vpc.default.id
+
+  # Only Load Balancer can talk to port 80
   ingress {
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
     security_groups = [aws_security_group.lb_sg.id] 
   }
+  # SSH allowed for deployment
   ingress {
     from_port   = 22
     to_port     = 22
@@ -82,7 +89,7 @@ resource "aws_security_group" "ec2_sg" {
   }
 }
 
-# Load Balancer
+# --- LOAD BALANCER ---
 resource "aws_lb" "app" {
   name               = "cosmin-prod-alb"
   internal           = false
@@ -97,8 +104,11 @@ resource "aws_lb_target_group" "blue" {
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
   health_check {
-    path = "/version.txt"
-    matcher = "200"
+    path                = "/version.txt"
+    matcher             = "200"
+    interval            = 10
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
   }
 }
 
@@ -108,8 +118,11 @@ resource "aws_lb_target_group" "green" {
   protocol = "HTTP"
   vpc_id   = data.aws_vpc.default.id
   health_check {
-    path = "/version.txt"
-    matcher = "200"
+    path                = "/version.txt"
+    matcher             = "200"
+    interval            = 10
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
   }
 }
 
@@ -123,39 +136,52 @@ resource "aws_lb_listener" "front_end" {
   }
 }
 
-# Instances
+# --- INSTANCES ---
 resource "aws_key_pair" "prod_key" {
   key_name   = "cosmin-prod-key"
-  public_key = var.public_key
+  public_key = var.public_key # Uses variable now!
 }
 
-# Robust User Data (Prod)
+# ROBUST USER DATA (The Fix)
 locals {
   user_data = <<-EOF
     #!/bin/bash
+    # 1. Logging
     exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
     
+    echo "Starting User Data..."
+
+    # 2. Wait for Yum Lock (Critical for Amazon Linux)
     while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
-       echo "Waiting for yum..."
+       echo "Waiting for other yum processes..."
        sleep 5
     done
     
+    # 3. Install Nginx
     yum update -y
     amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
+    # 4. Security Config (Safe Method)
+    # Nginx includes conf.d/*.conf by default. No sed editing needed.
     cat <<EOT > /etc/nginx/conf.d/security_headers.conf
     server_tokens off;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     EOT
-    sed -i '/include \/etc\/nginx\/conf.d\/\*.conf;/i \    include /etc/nginx/conf.d/security_headers.conf;' /etc/nginx/nginx.conf
 
+    # 5. Start Nginx
     systemctl enable nginx --now
+    
+    # 6. Prep Permissions
     mkdir -p /usr/share/nginx/html
     chown -R ec2-user:ec2-user /usr/share/nginx/html
+    
+    # 7. Default Page
     echo "<h1>Waiting for Deployment...</h1>" > /usr/share/nginx/html/index.html
     echo "prod_init" > /usr/share/nginx/html/version.txt
+
+    echo "User Data Finished!"
   EOF
 }
 
@@ -190,4 +216,3 @@ resource "aws_lb_target_group_attachment" "green" {
   target_id        = aws_instance.green.id
   port             = 80
 }
-
