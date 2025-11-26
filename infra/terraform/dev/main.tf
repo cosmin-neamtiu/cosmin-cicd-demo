@@ -16,12 +16,14 @@ provider "aws" {
   region = "eu-central-1"
 }
 
+# --- VARIABLES ---
 variable "public_key" {
   description = "Public SSH key for EC2"
   type        = string
   sensitive   = true
 }
 
+# --- DATA SOURCES ---
 data "aws_vpc" "default" { default = true }
 data "aws_subnets" "default" {
   filter {
@@ -38,7 +40,7 @@ data "aws_ami" "amzn2" {
   }
 }
 
-# Dev Security Group (SSH + HTTP)
+# --- SECURITY GROUP ---
 resource "aws_security_group" "dev_web" {
   name        = "cosmin-dev-web-sg"
   description = "Allow HTTP and SSH for DEV"
@@ -64,50 +66,57 @@ resource "aws_security_group" "dev_web" {
   }
 }
 
+# --- KEY PAIR ---
 resource "aws_key_pair" "dev_key" {
   key_name   = "cosmin-dev-key"
-  public_key = var.public_key
+  public_key = var.public_key 
 }
 
-# Robust User Data for Dev
+# --- ROBUST USER DATA ---
 locals {
   user_data = <<-EOF
     #!/bin/bash
+    # 1. Logging: Save logs to /var/log/user-data.log for debugging
     exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
     
-    # 1. Wait for yum lock
+    echo "Starting User Data..."
+
+    # 2. Wait for Yum Lock (Amazon Linux updates on boot, we must wait)
     while sudo fuser /var/run/yum.pid >/dev/null 2>&1; do
-       echo "Waiting for yum..."
+       echo "Waiting for other yum processes..."
        sleep 5
     done
     
-    # 2. Install Nginx
+    # 3. Install
     yum update -y
     amazon-linux-extras install nginx1 -y
     yum install -y unzip
     
-    # 3. Security Config (The Safer Way)
-    # We just create the file. Nginx loads conf.d/*.conf by default!
-    # We do NOT edit nginx.conf anymore.
+    # 4. Security Config (The Safe Way)
+    # Nginx automatically includes /etc/nginx/conf.d/*.conf by default.
+    # We do NOT touch the main nginx.conf file.
     cat <<EOT > /etc/nginx/conf.d/security_headers.conf
     server_tokens off;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     EOT
 
-    # 4. Start
+    # 5. Start Service
     systemctl enable nginx --now
     
-    # 5. Web Root Permissions
+    # 6. Permissions
     mkdir -p /usr/share/nginx/html
     chown -R ec2-user:ec2-user /usr/share/nginx/html
     
-    # 6. Default Page
+    # 7. Placeholder
     echo "<h1>Dev Environment Ready</h1>" > /usr/share/nginx/html/index.html
     echo "dev_init" > /usr/share/nginx/html/version.txt
+
+    echo "User Data Finished Successfully."
   EOF
 }
 
+# --- EC2 INSTANCE ---
 resource "aws_instance" "dev" {
   ami                    = data.aws_ami.amzn2.id
   instance_type          = "t3.micro"
