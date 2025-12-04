@@ -38,25 +38,24 @@
 
 ```mermaid
 graph TD
-    User([Developer]) -->|Push Code / PR / Tag| GH[GitHub Actions]
+    User([Developer]) -->|Push code / PR / tag| GH[GitHub Actions]
 
-    subgraph Continuous_Integration["CI (Build & Upload)"]
-        Test[Lint & SAST] --> Build[Build Artifact]
-        Build -->|Upload site.zip| S3_Art[(S3 Artifacts)]
+    subgraph Continuous_Integration["CI Build and Upload"]
+        Test[Lint and SAST] --> Build[Build artifact]
+        Build -->|Upload site.zip| S3_Art[(S3 artifacts)]
     end
 
-    subgraph Deployment["CD Dev & Prod"]
+    subgraph Deployment["CD Dev and Prod"]
         S3_Art -->|Download| DeployDev[Deploy Dev]
-        DeployDev --> VerifyDev[DAST Security Scan (Dev)]
-        VerifyDev -->|Tag v*| DeployProd[Release Prod]
+        DeployDev --> VerifyDev[DAST security scan]
+        VerifyDev -->|Tag release| DeployProd[Release Prod]
     end
 
-    subgraph Infrastructure["AWS Infrastructure"]
-        DeployDev -->|Recreate Strategy| EC2_Dev[Dev EC2]
-        DeployProd -->|Blue/Green Strategy| ALB[Load Balancer]
-        ALB -->|Traffic Swap| TG_Blue[Blue Env] & TG_Green[Green Env]
+    subgraph Infrastructure["AWS infrastructure"]
+        DeployDev -->|Recreate strategy| EC2_Dev[Dev EC2]
+        DeployProd -->|Blue/Green strategy| ALB[Load balancer]
+        ALB -->|Traffic swap| TG_Blue[Blue env] & TG_Green[Green env]
     end
-```
 
 ---
 
