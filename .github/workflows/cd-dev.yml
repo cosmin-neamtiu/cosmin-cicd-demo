@@ -12,7 +12,6 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     
-    # We need to explicitly allow the action to create issues if vulnerabilities are found
     permissions:
       contents: read
       issues: write 
@@ -40,14 +39,46 @@ jobs:
           echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
+      # ---------------------------------------------------------
+      # 🔍 PRE-FLIGHT CHECK
+      # ---------------------------------------------------------
+      - name: 🔍 Pre-flight Connectivity Check
+        env:
+          HOST: ${{ secrets.EC2_HOST_DEV }}
+        run: |
+          echo "Checking connectivity to $HOST on Port 22..."
+          if ! nc -z -w 5 $HOST 22; then
+            echo ""
+            echo "=================================================================="
+            echo "❌ CRITICAL ERROR: DEV SERVER UNREACHABLE"
+            echo "------------------------------------------------------------------"
+            echo "The pipeline could not connect to $HOST on Port 22."
+            echo ""
+            echo "Possible Causes:"
+            echo "1. The EC2 instance is STOPPED or TERMINATED."
+            echo "2. The Security Group does not allow SSH from GitHub Actions."
+            echo "3. The 'EC2_HOST_DEV' secret is incorrect."
+            echo "=================================================================="
+            echo ""
+            exit 1
+          fi
+          echo "✅ Server is UP. Proceeding to deploy..."
+
       - name: Deploy to EC2
         env:
-          HOST: ${{ secrets.EC2_HOST_DEV }} # Use Secrets!
+          HOST: ${{ secrets.EC2_HOST_DEV }}
           USER: "ec2-user"
         run: |
           scp -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 site.zip $USER@$HOST:/tmp/site.zip
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 $USER@$HOST << 'EOF'
             set -e
+            # Self-healing: Install Nginx if missing
+            if ! command -v nginx &> /dev/null; then
+               echo "⚠️ Nginx missing. Installing..."
+               sudo amazon-linux-extras install nginx1 -y
+               sudo systemctl enable nginx --now
+            fi
+            
             sudo mkdir -p /usr/share/nginx/html
             sudo rm -rf /usr/share/nginx/html/*
             sudo unzip -o /tmp/site.zip -d /usr/share/nginx/html
@@ -72,6 +103,6 @@ jobs:
         uses: zaproxy/action-baseline@v0.14.0
         with:
           target: "http://${{ secrets.EC2_HOST_DEV }}"
-          fail_action: false # Don't break the build for minor warnings, just report
-          cmd_options: '-a'  # Includes alpha passive rules
+          fail_action: false
+          cmd_options: '-a'
           artifact_name: 'zap-scan-report'

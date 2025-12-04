@@ -62,6 +62,28 @@ jobs:
           fi
 
       # ------------------------------------------------------------------
+      # 🔍 PRE-FLIGHT CHECK
+      # ------------------------------------------------------------------
+      - name: 🔍 Pre-flight Connectivity Check
+        run: |
+          echo "Checking connectivity to Target ($DEPLOY_IP) on Port 22..."
+          if ! nc -z -w 5 $DEPLOY_IP 22; then
+            echo ""
+            echo "=================================================================="
+            echo "❌ CRITICAL ERROR: PROD TARGET UNREACHABLE"
+            echo "------------------------------------------------------------------"
+            echo "The pipeline could not connect to the Idle Server ($DEPLOY_IP)."
+            echo "Possible Causes:"
+            echo "1. The EC2 instance is STOPPED or TERMINATED."
+            echo "2. The Security Group does not allow SSH."
+            echo "3. The Terraform state and GitHub Secrets are out of sync."
+            echo "=================================================================="
+            echo ""
+            exit 1
+          fi
+          echo "✅ Target Server is UP. Proceeding..."
+
+      # ------------------------------------------------------------------
       # DEPLOY: To the Idle IP (With Self-Healing)
       # ------------------------------------------------------------------
       - name: 🚚 Deploy to Idle ($COLOR)
@@ -92,7 +114,8 @@ jobs:
             
             sudo systemctl reload nginx || sudo systemctl restart nginx
           "
-# ------------------------------------------------------------------
+
+      # ------------------------------------------------------------------
       # TEST: Verify Idle is working (via SSH Localhost)
       # ------------------------------------------------------------------
       - name: 🧪 Health Check (Idle)
