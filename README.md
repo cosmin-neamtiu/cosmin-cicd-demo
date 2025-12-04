@@ -56,7 +56,7 @@ graph TD
         DeployProd -->|Blue/Green strategy| ALB[Load balancer]
         ALB -->|Traffic swap| TG_Blue[Blue env] & TG_Green[Green env]
     end
-
+```
 ---
 
 ### 1. Immutable Artifacts
