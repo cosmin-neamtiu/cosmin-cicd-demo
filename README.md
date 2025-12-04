@@ -34,6 +34,32 @@
 
 ##  Key Architectural Decisions
 
+### CI/CD Pipeline Flow
+
+```mermaid
+graph TD
+    User([Developer]) -->|Push Code / PR / Tag| GH[GitHub Actions]
+
+    subgraph Continuous_Integration["CI (Build & Upload)"]
+        Test[Lint & SAST] --> Build[Build Artifact]
+        Build -->|Upload site.zip| S3_Art[(S3 Artifacts)]
+    end
+
+    subgraph Deployment["CD Dev & Prod"]
+        S3_Art -->|Download| DeployDev[Deploy Dev]
+        DeployDev --> VerifyDev[DAST Security Scan (Dev)]
+        VerifyDev -->|Tag v*| DeployProd[Release Prod]
+    end
+
+    subgraph Infrastructure["AWS Infrastructure"]
+        DeployDev -->|Recreate Strategy| EC2_Dev[Dev EC2]
+        DeployProd -->|Blue/Green Strategy| ALB[Load Balancer]
+        ALB -->|Traffic Swap| TG_Blue[Blue Env] & TG_Green[Green Env]
+    end
+```
+
+---
+
 ### 1. Immutable Artifacts
 
 * Application code is **zipped and stored in S3**:
@@ -77,33 +103,6 @@
 ---
 
 ##  Deployment Strategies
-
-graph TD
-    User([Developer]) -->|Push Code / PR / Tag| GH[GitHub Actions]
-
-    subgraph Continuous_Integration["CI (Build & Upload)"]
-        Test[Lint & SAST] --> Build[Build Artifact]
-        Build -->|Upload site.zip| S3_Art[(S3 Artifacts)]
-    end
-
-    subgraph Deployment_Dev["CD Dev (Deploy)"]
-        S3_Art -->|Download| DeployDev[Deploy Dev]
-        DeployDev --> VerifyDev[DAST Security Scan (OWASP ZAP)]
-    end
-
-    subgraph Release_Prod["Release Prod (Blue/Green)"]
-        S3_Art --> DeployProd[Deploy Idle Env]
-        DeployProd --> HealthCheck[Local Health Check]
-        HealthCheck --> Swap[Swap ALB Target Group]
-    end
-
-    subgraph Infrastructure["Manage Infrastructure (Terraform)"]
-        User -->|workflow_dispatch| ManageInfra[Manage Infra]
-        ManageInfra --> TF_Apply[Terraform Plan / Apply]
-        TF_Apply --> SyncSecrets[Sync Outputs -> GitHub Secrets]
-    end
-
-
 
 
 ### 1. Development – “Recreate” Strategy
