@@ -50,19 +50,19 @@ jobs:
           
           # Compare with Blue ARN to decide destination
           if [ "$CURRENT_TG" == "${{ secrets.PROD_TG_BLUE_ARN }}" ]; then
-            echo "🔵 Blue is LIVE. Deploying to 🟢 GREEN."
+            echo " Blue is LIVE. Deploying to  GREEN."
             echo "DEPLOY_IP=${{ secrets.PROD_IP_GREEN }}" >> $GITHUB_ENV
             echo "NEW_TG_ARN=${{ secrets.PROD_TG_GREEN_ARN }}" >> $GITHUB_ENV
             echo "COLOR=Green" >> $GITHUB_ENV
           else
-            echo "🟢 Green is LIVE. Deploying to 🔵 BLUE."
+            echo " Green is LIVE. Deploying to  BLUE."
             echo "DEPLOY_IP=${{ secrets.PROD_IP_BLUE }}" >> $GITHUB_ENV
             echo "NEW_TG_ARN=${{ secrets.PROD_TG_BLUE_ARN }}" >> $GITHUB_ENV
             echo "COLOR=Blue" >> $GITHUB_ENV
           fi
 
       # ------------------------------------------------------------------
-      # 🔍 PRE-FLIGHT CHECK
+      #  PRE-FLIGHT CHECK
       # ------------------------------------------------------------------
       - name: 🔍 Pre-flight Connectivity Check
         run: |
@@ -70,7 +70,7 @@ jobs:
           if ! nc -z -w 5 $DEPLOY_IP 22; then
             echo ""
             echo "=================================================================="
-            echo "❌ CRITICAL ERROR: PROD TARGET UNREACHABLE"
+            echo " CRITICAL ERROR: PROD TARGET UNREACHABLE"
             echo "------------------------------------------------------------------"
             echo "The pipeline could not connect to the Idle Server ($DEPLOY_IP)."
             echo "Possible Causes:"
@@ -81,12 +81,12 @@ jobs:
             echo ""
             exit 1
           fi
-          echo "✅ Target Server is UP. Proceeding..."
+          echo " Target Server is UP. Proceeding..."
 
       # ------------------------------------------------------------------
       # DEPLOY: To the Idle IP (With Self-Healing)
       # ------------------------------------------------------------------
-      - name: 🚚 Deploy to Idle ($COLOR)
+      - name:  Deploy to Idle ($COLOR)
         run: |
           echo "Deploying to $DEPLOY_IP ($COLOR)..."
           
@@ -99,7 +99,7 @@ jobs:
             
             # --- SELF HEALING START ---
             if ! command -v nginx &> /dev/null; then
-                echo '⚠️ Nginx not found! Installing it now...'
+                echo ' Nginx not found! Installing it now...'
                 sudo amazon-linux-extras install nginx1 -y
                 sudo systemctl enable nginx --now
             fi
@@ -118,7 +118,7 @@ jobs:
       # ------------------------------------------------------------------
       # TEST: Verify Idle is working (via SSH Localhost)
       # ------------------------------------------------------------------
-      - name: 🧪 Health Check (Idle)
+      - name:  Health Check (Idle)
         run: |
           echo "Checking health internally on $DEPLOY_IP..."
           sleep 5
@@ -127,10 +127,10 @@ jobs:
           # This bypasses the Security Group that blocks external HTTP.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 ec2-user@$DEPLOY_IP "
             if curl --fail -s http://localhost/version.txt; then
-              echo '✅ Local Health Check Passed'
+              echo ' Local Health Check Passed'
               exit 0
             else
-              echo '❌ Local Health Check Failed'
+              echo ' Local Health Check Failed'
               exit 1
             fi
           "
@@ -138,7 +138,7 @@ jobs:
       # ------------------------------------------------------------------
       # SWAP: Flip the Load Balancer
       # ------------------------------------------------------------------
-      - name: 🔀 SWAP TRAFFIC (Blue <-> Green)
+      - name:  SWAP TRAFFIC (Blue <-> Green)
         run: |
           echo "Switching Load Balancer traffic to $NEW_TG_ARN ($COLOR)..."
           
@@ -146,4 +146,4 @@ jobs:
             --listener-arn ${{ secrets.PROD_LISTENER_ARN }} \
             --default-actions Type=forward,TargetGroupArn=$NEW_TG_ARN
           
-          echo "🚀 Traffic Swapped! $COLOR is now LIVE."
+          echo " Traffic Swapped! $COLOR is now LIVE."

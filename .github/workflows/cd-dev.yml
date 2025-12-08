@@ -40,9 +40,9 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
 
       # ---------------------------------------------------------
-      # 🔍 PRE-FLIGHT CHECK
+      #  PRE-FLIGHT CHECK
       # ---------------------------------------------------------
-      - name: 🔍 Pre-flight Connectivity Check
+      - name:  Pre-flight Connectivity Check
         env:
           HOST: ${{ secrets.EC2_HOST_DEV }}
         run: |
@@ -50,7 +50,7 @@ jobs:
           if ! nc -z -w 5 $HOST 22; then
             echo ""
             echo "=================================================================="
-            echo "❌ CRITICAL ERROR: DEV SERVER UNREACHABLE"
+            echo " CRITICAL ERROR: DEV SERVER UNREACHABLE"
             echo "------------------------------------------------------------------"
             echo "The pipeline could not connect to $HOST on Port 22."
             echo ""
@@ -62,7 +62,7 @@ jobs:
             echo ""
             exit 1
           fi
-          echo "✅ Server is UP. Proceeding to deploy..."
+          echo " Server is UP. Proceeding to deploy..."
 
       - name: Deploy to EC2
         env:
@@ -74,7 +74,7 @@ jobs:
             set -e
             # Self-healing: Install Nginx if missing
             if ! command -v nginx &> /dev/null; then
-               echo "⚠️ Nginx missing. Installing..."
+               echo " Nginx missing. Installing..."
                sudo amazon-linux-extras install nginx1 -y
                sudo systemctl enable nginx --now
             fi
@@ -97,7 +97,7 @@ jobs:
           echo "Waiting for Nginx..."
           sleep 5
           curl --fail "http://$HOST/version.txt"
-          echo "✅ Server is responding."
+          echo " Server is responding."
 
       - name: 2. DAST Scan (OWASP ZAP)
         uses: zaproxy/action-baseline@v0.14.0

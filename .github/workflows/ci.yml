@@ -67,4 +67,4 @@ jobs:
           COMMIT_HASH: ${{ github.sha }}
         run: |
           aws s3 cp site.zip s3://$BUCKET/builds/$COMMIT_HASH.zip
-          echo "✅ Uploaded to s3://$BUCKET/builds/$COMMIT_HASH.zip"
+          echo " Uploaded to s3://$BUCKET/builds/$COMMIT_HASH.zip"
