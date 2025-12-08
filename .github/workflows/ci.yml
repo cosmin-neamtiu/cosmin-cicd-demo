@@ -1,22 +1,21 @@
 name: CI (Build & Upload)
- 
+
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  # JOB 1: QUALITY CHECKS (Lint + SAST)
   quality-checks:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. LINT: Check HTML syntax
+      # Linting: Validate HTML files for structural and semantic correctness
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -28,32 +27,33 @@ jobs:
           echo '{ "extends": ["html-validate:recommended"], "rules": { "no-trailing-whitespace": "off" } }' > .htmlvalidate.json
           html-validate "site/**/*.html"
 
-      # 2. SAST: Check for secrets & config issues
-      - name: Run Trivy Vulnerability Scanner (SAST)
+      # Static Application Security Testing (SAST)
+      - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'             # Scan the file system
-          scan-ref: '.'               # Scan the current directory
+          scan-type: 'fs'
+          scan-ref: '.'
           hide-progress: false
-          format: 'table'             # Output pretty table
-          exit-code: '1'              # Fail the job if issues are found
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'   # Only stop for big issues
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
 
-  # JOB 2: BUILD
   build-and-upload:
-    needs: quality-checks  # Runs only if Lint AND SAST pass
+    needs: quality-checks
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Build: Create distributable artifact
       - name: Create artifact (site.zip)
         run: |
           cd site
           zip -r ../site.zip .
+          echo "Build successful (site.zip created)"
 
+      # Configure AWS credentials for deployment
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -61,10 +61,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
 
-      - name: Upload to S3
+      # Deployment: Upload artifacts only from main or tagged releases
+      - name: Upload to S3 (Main/Tags Only)
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
         env:
           BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
           COMMIT_HASH: ${{ github.sha }}
         run: |
+          echo "Uploading artifact to S3..."
           aws s3 cp site.zip s3://$BUCKET/builds/$COMMIT_HASH.zip
-          echo " Uploaded to s3://$BUCKET/builds/$COMMIT_HASH.zip"
+          echo "Upload complete."
+
+      # Informational notice for feature branches
+      - name: Skip Upload Notice
+        if: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          echo "Skipping S3 upload. Artifact deployment is limited to main branch and tagged releases."

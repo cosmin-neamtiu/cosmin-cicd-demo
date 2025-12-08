@@ -1,10 +1,10 @@
 name: Release Prod (Blue/Green)
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"  # Triggers on tags like v1.0.0
+  workflow_dispatch:
 
 jobs:
   blue-green-deploy:
@@ -16,11 +16,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Create Artifact
-        run: |
-          cd site
-          zip -r ../site.zip .
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -35,10 +30,26 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY_PROD_B64 }}" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
+      - name: Download Artifact
+        env:
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          # Logic: If Tag, get from releases folder. If Branch/Manual, get by SHA.
+          if [[ "$REF_TYPE" == "tag" ]]; then
+             echo "Tag detected. Downloading release: releases/$REF_NAME.zip"
+             aws s3 cp s3://$BUCKET/releases/$REF_NAME.zip site.zip
+          else
+             echo "Branch or Manual trigger detected. Downloading build: builds/$SHA.zip"
+             aws s3 cp s3://$BUCKET/builds/$SHA.zip site.zip
+          fi
+
       # ------------------------------------------------------------------
       # LOGIC: Detect Blue vs Green
       # ------------------------------------------------------------------
-      - name: 🕵️ Detect Active Environment
+      - name: Detect Active Environment
         id: detect
         run: |
           # Ask AWS: Which Target Group is the Listener pointing to?
@@ -51,27 +62,27 @@ jobs:
           
           # Compare with Blue ARN to decide destination
           if [ "$CURRENT_TG" == "${{ secrets.PROD_TG_BLUE_ARN }}" ]; then
-            echo " Blue is LIVE. Deploying to  GREEN."
+            echo "Blue is LIVE. Deploying to GREEN."
             echo "DEPLOY_IP=${{ secrets.PROD_IP_GREEN }}" >> $GITHUB_ENV
             echo "NEW_TG_ARN=${{ secrets.PROD_TG_GREEN_ARN }}" >> $GITHUB_ENV
             echo "COLOR=Green" >> $GITHUB_ENV
           else
-            echo " Green is LIVE. Deploying to  BLUE."
+            echo "Green is LIVE. Deploying to BLUE."
             echo "DEPLOY_IP=${{ secrets.PROD_IP_BLUE }}" >> $GITHUB_ENV
             echo "NEW_TG_ARN=${{ secrets.PROD_TG_BLUE_ARN }}" >> $GITHUB_ENV
             echo "COLOR=Blue" >> $GITHUB_ENV
           fi
 
       # ------------------------------------------------------------------
-      #  PRE-FLIGHT CHECK
+      # PRE-FLIGHT CHECK
       # ------------------------------------------------------------------
-      - name: 🔍 Pre-flight Connectivity Check
+      - name: Pre-flight Connectivity Check
         run: |
           echo "Checking connectivity to Target ($DEPLOY_IP) on Port 22..."
           if ! nc -z -w 5 $DEPLOY_IP 22; then
             echo ""
             echo "=================================================================="
-            echo " CRITICAL ERROR: PROD TARGET UNREACHABLE"
+            echo "CRITICAL ERROR: PROD TARGET UNREACHABLE"
             echo "------------------------------------------------------------------"
             echo "The pipeline could not connect to the Idle Server ($DEPLOY_IP)."
             echo "Possible Causes:"
@@ -82,12 +93,12 @@ jobs:
             echo ""
             exit 1
           fi
-          echo " Target Server is UP. Proceeding..."
+          echo "Target Server is UP. Proceeding..."
 
       # ------------------------------------------------------------------
       # DEPLOY: To the Idle IP (With Self-Healing)
       # ------------------------------------------------------------------
-      - name:  Deploy to Idle ($COLOR)
+      - name: Deploy to Idle Environment ($COLOR)
         run: |
           echo "Deploying to $DEPLOY_IP ($COLOR)..."
           
@@ -100,7 +111,7 @@ jobs:
             
             # --- SELF HEALING START ---
             if ! command -v nginx &> /dev/null; then
-                echo ' Nginx not found! Installing it now...'
+                echo 'Nginx not found! Installing it now...'
                 sudo amazon-linux-extras install nginx1 -y
                 sudo systemctl enable nginx --now
             fi
@@ -119,7 +130,7 @@ jobs:
       # ------------------------------------------------------------------
       # TEST: Verify Idle is working (via SSH Localhost)
       # ------------------------------------------------------------------
-      - name:  Health Check (Idle)
+      - name: Health Check (Idle)
         run: |
           echo "Checking health internally on $DEPLOY_IP..."
           sleep 5
@@ -128,10 +139,10 @@ jobs:
           # This bypasses the Security Group that blocks external HTTP.
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 ec2-user@$DEPLOY_IP "
             if curl --fail -s http://localhost/version.txt; then
-              echo ' Local Health Check Passed'
+              echo 'Local Health Check Passed'
               exit 0
             else
-              echo ' Local Health Check Failed'
+              echo 'Local Health Check Failed'
               exit 1
             fi
           "
@@ -139,7 +150,7 @@ jobs:
       # ------------------------------------------------------------------
       # SWAP: Flip the Load Balancer
       # ------------------------------------------------------------------
-      - name:  SWAP TRAFFIC (Blue <-> Green)
+      - name: Swap Traffic (Blue <-> Green)
         run: |
           echo "Switching Load Balancer traffic to $NEW_TG_ARN ($COLOR)..."
           
@@ -147,4 +158,4 @@ jobs:
             --listener-arn ${{ secrets.PROD_LISTENER_ARN }} \
             --default-actions Type=forward,TargetGroupArn=$NEW_TG_ARN
           
-          echo " Traffic Swapped! $COLOR is now LIVE."
+          echo "Traffic Swapped! $COLOR is now LIVE."

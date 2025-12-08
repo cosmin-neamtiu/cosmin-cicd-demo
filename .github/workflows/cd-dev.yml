@@ -7,6 +7,11 @@ on:
       - completed
   workflow_dispatch:
 
+# Prevent race conditions by queueing deployments
+concurrency: 
+  group: dev_environment
+  cancel-in-progress: false
+
 jobs:
   deploy-dev:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
@@ -24,11 +29,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
 
+      - name: Determine Commit Hash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "COMMIT_HASH=${{ github.sha }}" >> $GITHUB_ENV
+          else
+            echo "COMMIT_HASH=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_ENV
+          fi
+
       - name: Download Artifact
         env:
           BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
-          COMMIT_HASH: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
+          echo "Downloading artifact for commit: $COMMIT_HASH"
           aws s3 cp s3://$BUCKET/builds/$COMMIT_HASH.zip site.zip
 
       - name: Setup SSH Key
@@ -40,9 +53,9 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
 
       # ---------------------------------------------------------
-      #  PRE-FLIGHT CHECK
+      # PRE-FLIGHT CHECK
       # ---------------------------------------------------------
-      - name:  Pre-flight Connectivity Check
+      - name: Pre-flight Connectivity Check
         env:
           HOST: ${{ secrets.EC2_HOST_DEV }}
         run: |
@@ -50,7 +63,7 @@ jobs:
           if ! nc -z -w 5 $HOST 22; then
             echo ""
             echo "=================================================================="
-            echo " CRITICAL ERROR: DEV SERVER UNREACHABLE"
+            echo "CRITICAL ERROR: DEV SERVER UNREACHABLE"
             echo "------------------------------------------------------------------"
             echo "The pipeline could not connect to $HOST on Port 22."
             echo ""
@@ -62,7 +75,7 @@ jobs:
             echo ""
             exit 1
           fi
-          echo " Server is UP. Proceeding to deploy..."
+          echo "Server is UP. Proceeding to deploy..."
 
       - name: Deploy to EC2
         env:
@@ -74,7 +87,7 @@ jobs:
             set -e
             # Self-healing: Install Nginx if missing
             if ! command -v nginx &> /dev/null; then
-               echo " Nginx missing. Installing..."
+               echo "Nginx missing. Installing..."
                sudo amazon-linux-extras install nginx1 -y
                sudo systemctl enable nginx --now
             fi
@@ -97,7 +110,7 @@ jobs:
           echo "Waiting for Nginx..."
           sleep 5
           curl --fail "http://$HOST/version.txt"
-          echo " Server is responding."
+          echo "Server is responding."
 
       - name: 2. DAST Scan (OWASP ZAP)
         uses: zaproxy/action-baseline@v0.14.0
