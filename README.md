@@ -1,5 +1,5 @@
 
-#  Ultimate Portfolio README – Secure Blue/Green CI/CD on AWS with GitHub Actions
+#  Blue/Green CI/CD on AWS with GitHub Actions
 
 - Immutable artifact-based deployments  
 - Blue/Green zero-downtime releases on AWS  
@@ -516,6 +516,7 @@ Rollback is simply **re-running the release** with the previous tag or flipping 
 ##  License
 
 This project is licensed under the **MIT License** – see the `LICENSE` file for details.
+
 
 
 
