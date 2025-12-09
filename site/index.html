@@ -1,11 +1,113 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>Cosmin CI/CD Demo LETS SEE! !!!!</title>
-  </head>
-  <body>
-    <h1>It works! </h1>
-    <p>Deployed via CI/CD to EC2 + Nginx. demo day github!!</p>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <title>Welcome | CI/CD Demo App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+
+    body {
+      margin: 0;
+      font-family: 'Inter', sans-serif;
+      background: radial-gradient(circle at top right, #1e1b4b, #0f0f17 60%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .container {
+      max-width: 700px;
+      padding: 40px;
+      backdrop-filter: blur(16px);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      box-shadow: 0 0 60px rgba(0, 0, 0, 0.4);
+      animation: fadeIn 1.2s ease;
+    }
+
+    h1 {
+      font-size: 3rem;
+      font-weight: 800;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa, #34d399);
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    p {
+      font-size: 1.2rem;
+      margin-bottom: 25px;
+      font-weight: 300;
+      opacity: 0.85;
+    }
+
+    .btn {
+      padding: 12px 28px;
+      font-size: 1rem;
+      border-radius: 50px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, #6366f1, #22d3ee);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 5px 30px rgba(0, 0, 0, 0.4);
+      transition: 0.25s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* floating shapes / ambiance */
+    .orb {
+      position: absolute;
+      width: 300px;
+      height: 300px;
+      background: #4f46e5;
+      filter: blur(200px);
+      opacity: 0.25;
+      border-radius: 50%;
+      animation: float 10s infinite alternate ease-in-out;
+    }
+    .orb2 {
+      background: #06b6d4;
+      width: 220px;
+      height: 220px;
+      top: 60%;
+      left: 10%;
+      animation-duration: 14s;
+    }
+
+    @keyframes float {
+      from { transform: translateY(-50px); }
+      to   { transform: translateY(50px); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="orb"></div>
+  <div class="orb orb2"></div>
+
+  <div class="container">
+    <h1>Welcome to My Demo App</h1>
+    <p>This website is deployed automatically using a CI/CD pipeline.</p>
+    <button class="btn" onclick="alert('This is just a placeholder demo page!')">
+      Learn More
+    </button>
+  </div>
+
+</body>
 </html>
