@@ -2,7 +2,7 @@ name: CI (Build & Upload)
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [ "**" ] # Run CI on ALL branches to test them
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
@@ -15,7 +15,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Linting: Validate HTML files for structural and semantic correctness
+      # 1. LINT
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -27,7 +27,7 @@ jobs:
           echo '{ "extends": ["html-validate:recommended"], "rules": { "no-trailing-whitespace": "off" } }' > .htmlvalidate.json
           html-validate "site/**/*.html"
 
-      # Static Application Security Testing (SAST)
+      # 2. SAST
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -46,14 +46,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Build: Create distributable artifact
+      # 3. BUILD / COMPILE (Runs on ALL branches)
+      # This proves the code "compiles" (zips) successfully
       - name: Create artifact (site.zip)
         run: |
           cd site
           zip -r ../site.zip .
-          echo "Build successful (site.zip created)"
+          echo " Build successful (site.zip created)"
 
-      # Configure AWS credentials for deployment
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -61,19 +61,32 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION || 'eu-central-1' }}
 
-      # Deployment: Upload artifacts only from main or tagged releases
-      - name: Upload to S3 (Main/Tags Only)
+      # 4. UPLOAD STANDARD (Always use SHA for traceability)
+      - name: Upload Build Artifact (SHA)
         if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
         env:
           BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
           COMMIT_HASH: ${{ github.sha }}
         run: |
-          echo "Uploading artifact to S3..."
+          echo " Uploading build artifact..."
           aws s3 cp site.zip s3://$BUCKET/builds/$COMMIT_HASH.zip
-          echo "Upload complete."
 
-      # Informational notice for feature branches
+      # 5. UPLOAD RELEASE (Run ONLY on Tags) <-- THIS WAS MISSING
+      # This creates the specific file 'releases/v5.0.0.zip' that release.yml looks for.
+      - name: Upload Release Artifact (Tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          BUCKET: ${{ vars.ARTIFACTS_BUCKET || secrets.ARTIFACTS_BUCKET }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          echo " Tag detected: $TAG_NAME"
+          echo " Creating Release copy..."
+          aws s3 cp site.zip s3://$BUCKET/releases/$TAG_NAME.zip
+          echo " Release artifact created."
+
+      # Optional: Notification for Feature Branches
       - name: Skip Upload Notice
         if: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
         run: |
-          echo "Skipping S3 upload. Artifact deployment is limited to main branch and tagged releases."
+          echo " Skipping S3 Upload."
+          echo "Reason: This is a feature branch. We verified the build, but we won't store the artifact."
